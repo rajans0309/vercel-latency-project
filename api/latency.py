@@ -1,15 +1,32 @@
 import json
-import os
-from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+from typing import List
 
-with open(os.path.join(os.path.dirname(__file__), "q-vercel-latency.json")) as f:
-    RECORDS = json.load(f)
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "*",
-}
+RECORDS = json.loads((Path(__file__).parent / "q-vercel-latency.json").read_text())
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def always_allow_origin(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
+class Query(BaseModel):
+    regions: List[str]
+    threshold_ms: float
 
 
 def percentile(values, p):
@@ -38,37 +55,7 @@ def compute(regions, threshold):
     return out
 
 
-class handler(BaseHTTPRequestHandler):
-    def _send(self, status, body=None):
-        self.send_response(status)
-        for k, v in CORS.items():
-            self.send_header(k, v)
-        if body is not None:
-            data = json.dumps(body).encode()
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-        else:
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-    def do_OPTIONS(self):
-        self._send(204)
-
-    def _not_allowed(self):
-        self._send(405, {"error": "Use POST with JSON {\"regions\": [...], \"threshold_ms\": number}"})
-
-    do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = _not_allowed
-
-    def do_POST(self):
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-            payload = json.loads(self.rfile.read(n) or b"{}")
-            regions = payload["regions"]
-            threshold = float(payload["threshold_ms"])
-            if not isinstance(regions, list):
-                raise ValueError
-        except (ValueError, KeyError, TypeError):
-            return self._send(400, {"error": 'Expected JSON {"regions": [...], "threshold_ms": number}'})
-        self._send(200, {"regions": compute(regions, threshold)})
+@app.post("/")
+@app.post("/api/latency")
+def latency(q: Query):
+    return {"regions": compute(q.regions, q.threshold_ms)}
