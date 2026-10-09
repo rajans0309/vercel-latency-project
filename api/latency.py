@@ -56,6 +56,11 @@ class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(204)
 
+    def _not_allowed(self):
+        self._send(405, {"error": "Use POST with JSON {\"regions\": [...], \"threshold_ms\": number}"})
+
+    do_GET = do_HEAD = do_PUT = do_DELETE = do_PATCH = _not_allowed
+
     def do_POST(self):
         try:
             n = int(self.headers.get("Content-Length") or 0)
